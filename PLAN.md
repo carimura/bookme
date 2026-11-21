@@ -70,8 +70,13 @@ the link is the permission.
 The form can cause email to be sent, so:
 
 - Approval-first means no email reaches a booker's address until the owner approves.
-- Caps counted in D1: upcoming bookings per email address, and new requests per day in total.
-- No CAPTCHA, because it would block agents.
+- Caps counted in D1: upcoming bookings per email address, new requests per day in total, and
+  new requests per day from one network, so a single caller cannot use up the day's total.
+- A per-minute cap on API calls from one network, using the Workers Rate Limiting binding.
+- A booking attempt re-reads the calendar feeds at most once a minute, so a flood of requests
+  cannot turn this Worker into a flood against Google or Proton.
+- No CAPTCHA, because it would block agents. Someone spreading requests across many networks
+  can still use up the daily total; approval-first limits that to unanswered requests.
 
 ## Still to verify on a live deployment
 

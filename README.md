@@ -15,6 +15,8 @@ your own computer.
   open time minus busy time minus existing bookings.
 - The page shows a Monday to Friday week in the visitor's time zone. A visitor picks a time,
   30 minutes by default, or an hour where two slots in a row are open.
+- Every view has its own address: `?week=2026-12-07` for a week, `?time=2026-12-01T15:00Z` for
+  one time. You can send someone a link straight to a time.
 - A booking starts as a request. You get an email with an approve or decline link, and on
   approval both sides get a calendar invite. Set `AUTO_CONFIRM` to `true` to skip approval.
 - Agents book through the same JSON API the page uses. `/llms.txt` describes it.
@@ -94,8 +96,11 @@ What counts as busy: an event that is not cancelled, is marked busy rather than 
 you have not declined. Google marks all-day events free unless you change them.
 
 Limits on the open form are constants at the top of `src/index.ts`: 10 new requests a day in
-total, 2 upcoming bookings per email address, and a request left unanswered for 48 hours
-expires. There is no CAPTCHA, because it would block agents; approval is the spam filter.
+total, 3 a day from one network, 2 upcoming bookings per email address, and a request left
+unanswered for 48 hours expires. API calls are also capped at 30 a minute per network, set
+under `ratelimits` in `wrangler.jsonc`. To enforce the per-network limit, each booking is
+stored with the requester's IP address (the /64 network for IPv6). There is no CAPTCHA,
+because it would block agents; approval is the spam filter.
 
 ## API
 

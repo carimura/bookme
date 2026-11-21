@@ -16,9 +16,8 @@
 
   <section id="picker" hidden>
     <nav>
-      <h2><span id="week"></span> <small id="which"></small></h2>
-      <button type="button" id="current">Current week</button>
       <button type="button" id="prev" aria-label="Previous week">‹</button>
+      <h2><span id="week"></span> <small id="which"></small></h2>
       <button type="button" id="next" aria-label="Next week">›</button>
     </nav>
     <table id="grid"></table>
@@ -30,7 +29,7 @@
       <h2 id="chosen"></h2>
     </nav>
     <fieldset id="lengths">
-      <legend>Length</legend>
+      <legend>Length <span class="muted" id="hint"></span></legend>
       <label><input type="radio" name="units" value="1" checked> <span id="single"></span></label>
       <label><input type="radio" name="units" value="2"> <span id="double"></span></label>
     </fieldset>
@@ -40,17 +39,14 @@
     <button id="submit"></button>
   </form>
 
-  <section id="done" hidden>
-    <h2 id="done-title"></h2>
-    <p id="done-message"></p>
-    <p><a id="manage">Check status or cancel</a></p>
-  </section>
-
-  <footer class="muted">Booking for someone as an agent? Read <a href="/llms.txt">/llms.txt</a>.</footer>
+  <footer class="muted">Agents read <a href="/llms.txt">/llms.txt</a></footer>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
 const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+// The visitor's zone by its everyday name, such as "Pacific Time".
+const zoneName = new Intl.DateTimeFormat(undefined, { timeZoneName: "longGeneric" })
+  .formatToParts().find((part) => part.type === "timeZoneName").value;
 const dayOf = (d) => d.toLocaleDateString("en-CA"); // YYYY-MM-DD in the visitor's zone
 const dayLabel = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 const weekday = (d) => d.toLocaleDateString(undefined, { weekday: "short" });
@@ -59,13 +55,13 @@ const lengthLabel = (minutes) => (minutes === 60 ? "1 hour" : `${minutes} minute
 const minuteOf = (d) => d.getHours() * 60 + d.getMinutes();
 const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 const mondayOf = (d) => addDays(d, -((d.getDay() + 6) % 7));
+const weekAddress = (monday) => `?week=${dayOf(monday)}`;
 
 let weeks = []; // [Monday, open slot Dates] for every week from this one on, so weeks[0] is the current week
-let week = -1; // index into weeks, chosen on first load
+let week = 0; // index into weeks
 let openTimes = new Set(); // every open slot, as epoch ms
 let duration = 30; // minutes in one slot
 let picked = null;
-let needsApproval = true;
 
 function el(tag, ...children) {
   const node = document.createElement(tag);
@@ -73,20 +69,46 @@ function el(tag, ...children) {
   return node;
 }
 
+function showError(message) {
+  $("error").textContent = message;
+  $("error").hidden = false;
+}
+
+// Every view has its own address, so it can be shared and the browser's Back works:
+// ?week=<its Monday> for a week of the calendar, ?time=<start> for the form.
+function go(address) {
+  history.pushState(null, "", address);
+  route();
+}
+
+function route() {
+  if (!weeks.length) return;
+  const params = new URLSearchParams(location.search);
+  const time = new Date(params.get("time") ?? NaN);
+  if (openTimes.has(+time)) return showForm(time);
+  const monday = params.get("week") ?? (isNaN(time) ? "" : dayOf(mondayOf(time)));
+  week = weeks.findIndex(([start]) => dayOf(start) === monday);
+  if (week < 0) week = weeks.findIndex(([, open]) => open.length); // the first week with a free time
+  showWeek();
+  if (params.has("time")) showError("That time is no longer available.");
+}
+
 function slotButton(slot) {
   const button = el("button", timeLabel(slot));
   button.type = "button";
-  // The form takes the calendar's place; Back returns to it.
-  button.onclick = () => {
-    picked = slot;
-    $("chosen").textContent = `${weekday(slot)}, ${dayLabel(slot)} at ${timeLabel(slot)}`;
-    $("form").elements.units.value = "1";
-    $("lengths").hidden = !openTimes.has(+slot + duration * 60000); // a double needs the next slot too
-    $("error").hidden = $("picker").hidden = true;
-    $("form").hidden = false;
-    $("form").elements.name.focus();
-  };
+  button.onclick = () => go(`?time=${slot.toISOString().slice(0, 16)}Z`);
   return button;
+}
+
+// The form takes the calendar's place; Back returns to it.
+function showForm(slot) {
+  picked = slot;
+  $("chosen").textContent = `${weekday(slot)}, ${dayLabel(slot)} at ${timeLabel(slot)}`;
+  $("form").elements.units.value = "1";
+  $("lengths").hidden = !openTimes.has(+slot + duration * 60000); // a double needs the next slot too
+  $("error").hidden = $("picker").hidden = true;
+  $("form").hidden = false;
+  $("form").elements.name.focus();
 }
 
 function showWeek() {
@@ -94,7 +116,7 @@ function showWeek() {
   picked = null;
   $("error").hidden = $("form").hidden = true;
   $("picker").hidden = false;
-  $("current").disabled = $("prev").disabled = week === 0;
+  $("prev").disabled = week === 0;
   $("next").disabled = week === weeks.length - 1;
   $("which").textContent = ["(Current week)", "(Next week)"][week] ?? "";
   // Monday to Friday, plus a weekend day only when the visitor's zone puts a slot on it.
@@ -122,35 +144,30 @@ function showWeek() {
     el("tbody", ...body));
 }
 
-$("back").onclick = showWeek;
-$("current").onclick = () => { week = 0; showWeek(); };
-$("prev").onclick = () => { week--; showWeek(); };
-$("next").onclick = () => { week++; showWeek(); };
+window.onpopstate = route;
+$("back").onclick = () => go(weekAddress(mondayOf(picked)));
+$("prev").onclick = () => go(weekAddress(weeks[week - 1][0]));
+$("next").onclick = () => go(weekAddress(weeks[week + 1][0]));
 
 async function load() {
   const res = await fetch("/api/slots");
   const data = await res.json();
   if (!res.ok) return void ($("summary").textContent = data.error);
-  needsApproval = data.requires_approval;
-  $("submit").textContent = needsApproval ? "Request this time" : "Book this time";
+  $("submit").textContent = data.requires_approval ? "Request this time" : "Book this time";
   document.title = $("title").textContent = `Book time with ${data.owner_name}`;
   duration = data.duration_minutes;
   $("single").textContent = lengthLabel(duration);
   $("double").textContent = lengthLabel(2 * duration);
+  $("hint").textContent = `(${duration} min unless we discussed longer)`;
   const slots = data.slots.map((s) => new Date(s)); // earliest first
   openTimes = new Set(slots.map(Number));
   weeks = [];
   for (let monday = mondayOf(new Date()); slots.length && monday <= slots.at(-1); monday = addDays(monday, 7)) {
     weeks.push([monday, slots.filter((slot) => +mondayOf(slot) === +monday)]);
   }
-  // Open on the first week with a free time. A reload after a clash stays on the week being viewed.
-  if (!weeks[week]) week = weeks.findIndex(([, open]) => open.length);
-  $("picker").hidden = weeks.length === 0;
-  $("form").hidden = true;
-  $("summary").textContent = weeks.length
-    ? `${lengthLabel(duration)} or ${lengthLabel(2 * duration)}. Times are shown in ${zone.replaceAll("_", " ")}.`
-    : "No times are open right now. Check back soon.";
-  if (weeks.length) showWeek();
+  $("picker").hidden = $("form").hidden = true;
+  $("summary").textContent = weeks.length ? `All times shown are ${zoneName}.` : "No times are open right now. Check back soon.";
+  route();
 }
 
 $("form").onsubmit = async (event) => {
@@ -177,18 +194,11 @@ $("form").onsubmit = async (event) => {
     data = { error: "Could not reach the server. Check your connection and try again." };
   }
   $("submit").disabled = false;
-  if (res?.ok) {
-    $("picker").hidden = $("form").hidden = true;
-    $("summary").textContent = $("chosen").textContent;
-    $("done-title").textContent = needsApproval ? "Request sent" : "Booked";
-    $("done-message").textContent = data.message;
-    $("manage").href = data.manage_url;
-    $("done").hidden = false;
-    return;
-  }
-  if (res?.status === 409) await load(); // the time went away; back to the calendar, which no longer has it
-  $("error").textContent = data.error;
-  $("error").hidden = false;
+  if (res?.ok) return location.assign(data.manage_url); // the booking's own page
+  if (res?.status !== 409) return showError(data.error);
+  // The time went away. Reloading shows whatever this address still can: the week, or the form for a single slot.
+  await load();
+  if (!$("form").hidden) showError(`Only ${lengthLabel(duration)} is open at that time now.`);
 };
 
 load().catch(() => ($("summary").textContent = "Could not load times. Refresh to try again."));

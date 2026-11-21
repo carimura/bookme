@@ -1,22 +1,51 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "bookme",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-11-01",
-  // Deploy to your own hostname with: npm run deploy -- --domain book.example.com
-  "workers_dev": false,
-  "observability": { "enabled": true },
-  "assets": { "directory": "./public" },
-  "triggers": { "crons": ["*/15 * * * *"] },
-  "d1_databases": [{ "binding": "DB", "database_name": "bookme", "migrations_dir": "migrations" }],
-  "send_email": [{ "name": "EMAIL" }],
-  // Who you are and which calendars to read are secrets, not vars: see .dev.vars.example.
-  "vars": {
-    "DURATION_MINUTES": 30,
-    "MIN_NOTICE_HOURS": 24,
-    "BUFFER_MINUTES": 0,
-    "HORIZON_DAYS": 60,
-    // false: each request waits for the owner's approval before anyone is emailed an invite.
-    "AUTO_CONFIRM": false
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "bookme",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-11-01",
+	// Deploy to your own hostname with: npm run deploy -- --domain book.example.com
+	"workers_dev": false,
+	"observability": {
+		"enabled": true
+	},
+	"assets": {
+		"directory": "./public"
+	},
+	"triggers": {
+		"crons": [
+			"*/15 * * * *"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "bookme",
+			"migrations_dir": "migrations"
+		}
+	],
+	"send_email": [
+		{
+			"name": "EMAIL"
+		}
+	],
+	// API calls allowed per minute from one network. namespace_id is any number unique in your account.
+	"ratelimits": [
+		{
+			"name": "API_LIMIT",
+			"namespace_id": "8787",
+			"simple": {
+				"limit": 30,
+				"period": 60
+			}
+		}
+	],
+	// Who you are and which calendars to read are secrets, not vars: see .dev.vars.example.
+	"vars": {
+		"DURATION_MINUTES": 30,
+		"MIN_NOTICE_HOURS": 24,
+		"BUFFER_MINUTES": 0,
+		"HORIZON_DAYS": 60,
+		// false: each request waits for the owner's approval before anyone is emailed an invite.
+		"AUTO_CONFIRM": false
+	}
 }

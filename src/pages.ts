@@ -52,7 +52,10 @@ export function managePage(env: Env, b: Booking): Response {
       ["Length", `${minutes(b)} minutes`],
       ["Where", env.LOCATION],
     ]) +
-    (upcoming(b) ? `<form method="post"><button class="danger">Cancel this ${what}</button></form>` : "") +
+    (upcoming(b)
+      ? `<p class="muted">You can come back to this link later to cancel. To change the time, cancel and book a new one.</p>
+<form method="post"><button class="danger">Cancel this ${what}</button></form>`
+      : "") +
     `<p><a href="/">Book another time</a></p>`,
   );
 }
@@ -79,7 +82,7 @@ export function approvePage(env: Env, b: Booking): Response {
 }
 
 /** Plain-text description of the API, for agents. */
-export function llmsText(env: Env, origin: string, pendingHours: number, maxPerEmail: number): string {
+export function llmsText(env: Env, origin: string, pendingHours: number, maxPerEmail: number, maxPerNetwork: number): string {
   const outcome = env.AUTO_CONFIRM
     ? `Returns 201 with "status": "confirmed". A calendar invite is emailed to the address given.`
     : `Returns 201 with "status": "pending". ${env.OWNER_NAME} approves each request by hand. Once approved, the
@@ -124,7 +127,8 @@ POST ${origin}/api/bookings/<id>/cancel   returns {"status": "cancelled"}
 ## Rules
 
 - Give the real name and email address of the person who will attend.
-- An address can hold at most ${maxPerEmail} upcoming bookings.
+- An address can hold at most ${maxPerEmail} upcoming bookings, and one network can make ${maxPerNetwork} requests a day.
+- Fetch slots when you need them rather than polling. Calls are rate limited per minute.
 - If you are an agent booking for someone, say so in the note.
 `;
 }

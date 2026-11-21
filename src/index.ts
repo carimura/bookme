@@ -12,6 +12,8 @@ const PENDING_TTL = 48 * HOUR;
 /** Limits on what the open form can do: new requests per day overall, upcoming bookings per address. */
 const MAX_NEW_PER_DAY = 10;
 const MAX_ACTIVE_PER_EMAIL = 2;
+/** New requests per day from one network, so a single caller cannot use up the day's total. */
+const MAX_NEW_PER_NETWORK = 3;
 
 interface Feeds {
   open: Interval[];
@@ -24,6 +26,12 @@ const json = (data: unknown, status = 200) => Response.json(data, { status });
 const fail = (status: number, error: string) => json({ error }, status);
 const iso = (ms: number) => new Date(ms).toISOString();
 const token = () => crypto.randomUUID().replaceAll("-", "");
+
+/** The caller's address, cut to its /64 network for IPv6, where one device has many addresses. */
+function network(request: Request): string {
+  const ip = request.headers.get("cf-connecting-ip") ?? "";
+  return ip.includes(":") ? ip.split(":").slice(0, 4).join(":") : ip;
+}
 
 /** Reads every calendar feed and stores the open and busy intervals. Throws if any feed fails. */
 async function sync(env: Env): Promise<Feeds> {
@@ -120,15 +128,20 @@ async function create(request: Request, env: Env, origin: string): Promise<Respo
   } catch {} // unknown zone: word emails in the owner's
 
   const now = Date.now();
+  const ip = network(request);
   const n = (await env.DB.prepare(
     `SELECT (SELECT COUNT(*) FROM bookings WHERE created_at > ?1) AS recent,
+            (SELECT COUNT(*) FROM bookings WHERE created_at > ?1 AND ip = ?4) AS sameNetwork,
             (SELECT COUNT(*) FROM bookings WHERE email = ?2 AND status IN ('pending', 'confirmed') AND end > ?3) AS active`,
-  ).bind(now - DAY, email, now).first<{ recent: number; active: number }>())!;
+  ).bind(now - DAY, email, now, ip).first<{ recent: number; sameNetwork: number; active: number }>())!;
   if (n.active >= MAX_ACTIVE_PER_EMAIL) return fail(429, `That address already has ${n.active} upcoming bookings.`);
+  if (n.sameNetwork >= MAX_NEW_PER_NETWORK) return fail(429, "Too many booking requests from your network today. Try again tomorrow.");
   if (n.recent >= MAX_NEW_PER_DAY) return fail(429, "Too many booking requests today. Try again tomorrow.");
 
-  // Re-read the calendars so an event added minutes ago still blocks the slot.
-  const feeds = (await sync(env).catch(logged)) ?? (await cached(env));
+  // Re-read the calendars so an event added minutes ago still blocks the slot, but at most once
+  // a minute, so a flood of requests cannot make this Worker flood the calendar feeds.
+  const last = await cached(env);
+  const feeds = last && now - last.syncedAt < MIN ? last : (await sync(env).catch(logged)) ?? last;
   if (!feeds) return fail(503, "Availability is temporarily unavailable. Try again in a few minutes.");
   if (!(await openSlots(env, feeds, duration)).includes(start)) return fail(409, "That time is no longer available. Fetch /api/slots again.");
 
@@ -140,10 +153,10 @@ async function create(request: Request, env: Env, origin: string): Promise<Respo
   };
   // One statement, so two people cannot take the same time.
   const inserted = await env.DB.prepare(
-    `INSERT INTO bookings (id, owner_token, start, end, name, email, note, timezone, status, created_at)
-     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+    `INSERT INTO bookings (id, owner_token, start, end, name, email, note, timezone, status, created_at, ip)
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?13
      WHERE NOT EXISTS (SELECT 1 FROM bookings WHERE status IN ('pending', 'confirmed') AND start < ?11 AND end > ?12)`,
-  ).bind(b.id, b.owner_token, start, end, name, email, note, timezone, b.status, now, end + buffer, start - buffer).run();
+  ).bind(b.id, b.owner_token, start, end, name, email, note, timezone, b.status, now, end + buffer, start - buffer, ip).run();
   if (!inserted.meta.changes) return fail(409, "That time was just taken. Fetch /api/slots again.");
 
   try {
@@ -217,7 +230,12 @@ export default {
     const post = request.method === "POST";
     const back = () => Response.redirect(url.href, 303);
     try {
-      if (a === "llms.txt" && !b) return new Response(llmsText(env, url.origin, PENDING_TTL / HOUR, MAX_ACTIVE_PER_EMAIL), { headers: { "content-type": "text/plain; charset=utf-8" } });
+      if (a === "llms.txt" && !b) return new Response(llmsText(env, url.origin, PENDING_TTL / HOUR, MAX_ACTIVE_PER_EMAIL, MAX_NEW_PER_NETWORK), { headers: { "content-type": "text/plain; charset=utf-8" } });
+
+      // A per-minute cap on API calls from one network; the size is set in wrangler.jsonc.
+      if (a === "api" && !(await env.API_LIMIT.limit({ key: `bookme:${network(request)}` })).success) {
+        return fail(429, "Too many requests. Wait a minute and try again.");
+      }
 
       if (a === "api" && b === "slots" && !c) {
         const feeds = (await cached(env)) ?? (await sync(env).catch(logged));
