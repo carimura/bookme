@@ -1,0 +1,24 @@
+# Copy to .dev.vars and fill in. `wrangler dev` reads it; `wrangler secret bulk .dev.vars`
+# uploads the same values for the deployed Worker. Never commit .dev.vars.
+
+OWNER_NAME="Ada Example"
+# Gets the booking requests and is an attendee on every invite.
+OWNER_EMAIL=ada@example.com
+# Every address of yours that appears on your calendars. An event one of them declined is not busy.
+MY_EMAILS=ada@example.com,ada@work.example
+# Sender of all mail. Its domain must be set up for Cloudflare Email Sending.
+FROM_EMAIL=bookings@example.com
+# Your IANA time zone: used for all-day events and for wording emails.
+TZ=America/Los_Angeles
+# Put in every invite, e.g. a standing video link.
+LOCATION="Details to follow"
+
+# One line per calendar: any name you like = that calendar's secret iCal address.
+# These URLs give read access to the whole calendar.
+AVAILABILITY=https://calendar.google.com/calendar/ical/.../private-.../basic.ics
+WORK=https://calendar.google.com/calendar/ical/.../private-.../basic.ics
+PERSONAL=https://calendar.proton.me/api/calendar/v1/url/.../calendar.ics?...
+
+# Which of the names above hold open windows, and which hold busy time.
+OPEN_FEEDS=AVAILABILITY
+BUSY_FEEDS=WORK,PERSONAL

@@ -1,0 +1,22 @@
+{
+  "name": "bookme",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "ical.js": "^2.2.1"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\"",
+    "check-feeds": "node scripts/check-feeds.ts",
+    "dev": "wrangler dev",
+    "types": "wrangler types --strict-vars false",
+    "typecheck": "wrangler types --strict-vars false && tsc",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "wrangler": "^4.166.0"
+  },
+  "license": "MIT",
+  "version": "1.0.0"
+}

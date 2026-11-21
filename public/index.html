@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book a time</title>
+<meta name="description" content="Pick a time to meet.">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="API description for agents">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <h1 id="title">Book a time</h1>
+  <p class="muted" id="summary">Loading times…</p>
+  <p class="error" id="error" role="alert" hidden></p>
+
+  <section id="picker" hidden>
+    <nav>
+      <h2><span id="week"></span> <small id="which"></small></h2>
+      <button type="button" id="current">Current week</button>
+      <button type="button" id="prev" aria-label="Previous week">‹</button>
+      <button type="button" id="next" aria-label="Next week">›</button>
+    </nav>
+    <table id="grid"></table>
+  </section>
+
+  <form id="form" hidden>
+    <nav>
+      <button type="button" id="back">‹ Back</button>
+      <h2 id="chosen"></h2>
+    </nav>
+    <fieldset id="lengths">
+      <legend>Length</legend>
+      <label><input type="radio" name="units" value="1" checked> <span id="single"></span></label>
+      <label><input type="radio" name="units" value="2"> <span id="double"></span></label>
+    </fieldset>
+    <label>Your name <input name="name" required maxlength="100" autocomplete="name"></label>
+    <label>Email <input name="email" type="email" required maxlength="254" autocomplete="email"></label>
+    <label>What's it about? <span class="muted">(optional)</span><textarea name="note" rows="3" maxlength="1000"></textarea></label>
+    <button id="submit"></button>
+  </form>
+
+  <section id="done" hidden>
+    <h2 id="done-title"></h2>
+    <p id="done-message"></p>
+    <p><a id="manage">Check status or cancel</a></p>
+  </section>
+
+  <footer class="muted">Booking for someone as an agent? Read <a href="/llms.txt">/llms.txt</a>.</footer>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const dayOf = (d) => d.toLocaleDateString("en-CA"); // YYYY-MM-DD in the visitor's zone
+const dayLabel = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const weekday = (d) => d.toLocaleDateString(undefined, { weekday: "short" });
+const timeLabel = (d) => d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+const lengthLabel = (minutes) => (minutes === 60 ? "1 hour" : `${minutes} minutes`);
+const minuteOf = (d) => d.getHours() * 60 + d.getMinutes();
+const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+const mondayOf = (d) => addDays(d, -((d.getDay() + 6) % 7));
+
+let weeks = []; // [Monday, open slot Dates] for every week from this one on, so weeks[0] is the current week
+let week = -1; // index into weeks, chosen on first load
+let openTimes = new Set(); // every open slot, as epoch ms
+let duration = 30; // minutes in one slot
+let picked = null;
+let needsApproval = true;
+
+function el(tag, ...children) {
+  const node = document.createElement(tag);
+  node.append(...children);
+  return node;
+}
+
+function slotButton(slot) {
+  const button = el("button", timeLabel(slot));
+  button.type = "button";
+  // The form takes the calendar's place; Back returns to it.
+  button.onclick = () => {
+    picked = slot;
+    $("chosen").textContent = `${weekday(slot)}, ${dayLabel(slot)} at ${timeLabel(slot)}`;
+    $("form").elements.units.value = "1";
+    $("lengths").hidden = !openTimes.has(+slot + duration * 60000); // a double needs the next slot too
+    $("error").hidden = $("picker").hidden = true;
+    $("form").hidden = false;
+    $("form").elements.name.focus();
+  };
+  return button;
+}
+
+function showWeek() {
+  const [monday, slots] = weeks[week];
+  picked = null;
+  $("error").hidden = $("form").hidden = true;
+  $("picker").hidden = false;
+  $("current").disabled = $("prev").disabled = week === 0;
+  $("next").disabled = week === weeks.length - 1;
+  $("which").textContent = ["(Current week)", "(Next week)"][week] ?? "";
+  // Monday to Friday, plus a weekend day only when the visitor's zone puts a slot on it.
+  const days = [0, 1, 2, 3, 4, 5, 6].map((n) => addDays(monday, n))
+    .filter((day, n) => n < 5 || slots.some((slot) => dayOf(slot) === dayOf(day)));
+  const rows = [...new Set(slots.map(minuteOf))].sort((a, b) => a - b);
+  $("week").textContent = `${dayLabel(days[0])} – ${dayLabel(days.at(-1))}`;
+  const body = rows.map((minute) => {
+    const row = el("tr",
+      el("th", minute % 60 ? "" : new Date(2000, 0, 1, 0, minute).toLocaleTimeString(undefined, { hour: "numeric" })),
+      ...days.map((day) => {
+        const slot = slots.find((s) => dayOf(s) === dayOf(day) && minuteOf(s) === minute);
+        return el("td", ...(slot ? [slotButton(slot)] : []));
+      }));
+    if (minute % 60 === 0) row.className = "hour"; // drawn with a line above it
+    return row;
+  });
+  if (!rows.length) {
+    const none = el("td", "No open times this week.");
+    none.colSpan = days.length;
+    body.push(el("tr", el("th"), none));
+  }
+  $("grid").replaceChildren(
+    el("thead", el("tr", el("td"), ...days.map((day) => el("th", weekday(day), el("small", dayLabel(day)))))),
+    el("tbody", ...body));
+}
+
+$("back").onclick = showWeek;
+$("current").onclick = () => { week = 0; showWeek(); };
+$("prev").onclick = () => { week--; showWeek(); };
+$("next").onclick = () => { week++; showWeek(); };
+
+async function load() {
+  const res = await fetch("/api/slots");
+  const data = await res.json();
+  if (!res.ok) return void ($("summary").textContent = data.error);
+  needsApproval = data.requires_approval;
+  $("submit").textContent = needsApproval ? "Request this time" : "Book this time";
+  document.title = $("title").textContent = `Book time with ${data.owner_name}`;
+  duration = data.duration_minutes;
+  $("single").textContent = lengthLabel(duration);
+  $("double").textContent = lengthLabel(2 * duration);
+  const slots = data.slots.map((s) => new Date(s)); // earliest first
+  openTimes = new Set(slots.map(Number));
+  weeks = [];
+  for (let monday = mondayOf(new Date()); slots.length && monday <= slots.at(-1); monday = addDays(monday, 7)) {
+    weeks.push([monday, slots.filter((slot) => +mondayOf(slot) === +monday)]);
+  }
+  // Open on the first week with a free time. A reload after a clash stays on the week being viewed.
+  if (!weeks[week]) week = weeks.findIndex(([, open]) => open.length);
+  $("picker").hidden = weeks.length === 0;
+  $("form").hidden = true;
+  $("summary").textContent = weeks.length
+    ? `${lengthLabel(duration)} or ${lengthLabel(2 * duration)}. Times are shown in ${zone.replaceAll("_", " ")}.`
+    : "No times are open right now. Check back soon.";
+  if (weeks.length) showWeek();
+}
+
+$("form").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  $("submit").disabled = true;
+  $("error").hidden = true;
+  let res, data;
+  try {
+    res = await fetch("/api/bookings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        start: picked.toISOString(),
+        name: form.elements.name.value,
+        email: form.elements.email.value,
+        note: form.elements.note.value,
+        timezone: zone,
+        duration_minutes: duration * form.elements.units.value,
+      }),
+    });
+    data = await res.json();
+  } catch {
+    data = { error: "Could not reach the server. Check your connection and try again." };
+  }
+  $("submit").disabled = false;
+  if (res?.ok) {
+    $("picker").hidden = $("form").hidden = true;
+    $("summary").textContent = $("chosen").textContent;
+    $("done-title").textContent = needsApproval ? "Request sent" : "Booked";
+    $("done-message").textContent = data.message;
+    $("manage").href = data.manage_url;
+    $("done").hidden = false;
+    return;
+  }
+  if (res?.status === 409) await load(); // the time went away; back to the calendar, which no longer has it
+  $("error").textContent = data.error;
+  $("error").hidden = false;
+};
+
+load().catch(() => ($("summary").textContent = "Could not load times. Refresh to try again."));
+</script>
+</body>
+</html>
